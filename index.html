@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Piezo Pump Health Monitor — Simulation</title>
+<style>
+  :root{
+    --bg:#0f1521; --panel:#171f30; --panel2:#1e2740; --line:#2b3554;
+    --text:#eef1f8; --muted:#93a0bf; --accent:#5aa9ff;
+    --b1:#ff5a5a; --b2:#ffa63d; --b3:#4da8ff;
+    padding-top:env(safe-area-inset-top,0px); padding-bottom:env(safe-area-inset-bottom,0px);
+  }
+  @media (prefers-color-scheme: light){
+    :root:not([data-theme="dark"]){
+      --bg:#f4f6fb; --panel:#ffffff; --panel2:#eef1f8; --line:#dbe1f0;
+      --text:#182035; --muted:#5c6a8c;
+    }
+  }
+  *{box-sizing:border-box;}
+  html{scroll-padding-top:env(safe-area-inset-top,0px);}
+  body{
+    margin:0; background:var(--bg); color:var(--text);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;
+    min-height:100%;
+  }
+  .wrap{max-width:980px; margin:0 auto; padding:28px 18px 60px;}
+  h1{font-size:1.5rem; margin:0 0 4px;}
+  .sub{color:var(--muted); font-size:.92rem; margin:0 0 22px;}
+  .card{background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:18px 20px; margin-bottom:18px;}
+  .status{
+    display:flex; align-items:center; gap:12px; padding:16px 18px; border-radius:14px;
+    background:var(--panel2); border:1px solid var(--line); margin-bottom:18px; transition:.25s;
+  }
+  .dot{width:14px;height:14px;border-radius:50%; background:#3ddc7a; box-shadow:0 0 10px #3ddc7a; flex:0 0 auto;}
+  .dot.fault{background:var(--fault-color,#ff5a5a); box-shadow:0 0 14px var(--fault-color,#ff5a5a);}
+  .status b{font-size:1.05rem;}
+  .status span{color:var(--muted); font-size:.85rem; display:block;}
+
+  .controls{display:flex; flex-wrap:wrap; gap:10px; margin-bottom:8px;}
+  button{
+    background:var(--panel2); color:var(--text); border:1px solid var(--line);
+    border-radius:10px; padding:9px 14px; font-size:.88rem; cursor:pointer; transition:.15s;
+  }
+  button:hover{border-color:var(--accent);}
+  button.active{background:var(--accent); color:#08111f; border-color:var(--accent); font-weight:600;}
+  .freq-row{display:flex; align-items:center; gap:14px; margin-top:14px;}
+  .freq-row input[type=range]{flex:1; accent-color:var(--accent);}
+  .freq-val{font-variant-numeric:tabular-nums; min-width:88px; text-align:right; font-weight:600;}
+
+  .beams{display:grid; gap:14px; margin-top:6px;}
+  .beam-row{display:grid; grid-template-columns:120px 1fr 90px; gap:14px; align-items:center;}
+  .beam-label{font-size:.85rem;}
+  .beam-label b{display:block; font-size:.95rem;}
+  .beam-label span{color:var(--muted); font-size:.78rem;}
+  .stage{
+    position:relative; height:64px; background:var(--panel2); border:1px solid var(--line);
+    border-radius:10px; overflow:hidden;
+  }
+  .clamp{position:absolute; left:0; top:0; bottom:0; width:14px; background:#485067;}
+  .beam-bar{
+    position:absolute; left:14px; top:50%; height:6px; width:60%;
+    transform-origin:left center; border-radius:3px;
+  }
+  .disc{
+    position:absolute; top:50%; width:22px; height:22px; border-radius:50%;
+    transform:translate(-50%,-50%); border:2px solid rgba(0,0,0,.25);
+  }
+  .volt-readout{text-align:right; font-variant-numeric:tabular-nums; font-size:.95rem;}
+  .volt-readout .v{font-weight:700; font-size:1.05rem;}
+  .volt-bar-track{height:5px; background:var(--line); border-radius:3px; margin-top:5px; overflow:hidden;}
+  .volt-bar-fill{height:100%; width:0%; transition:width .1s linear;}
+
+  .legend{display:flex; gap:18px; flex-wrap:wrap; font-size:.78rem; color:var(--muted); margin-top:14px;}
+  .legend span{display:inline-flex; align-items:center; gap:6px;}
+  .sw{width:10px;height:10px;border-radius:50%;}
+  footer{color:var(--muted); font-size:.78rem; text-align:center; margin-top:20px;}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Piezo Pump Health Monitor — Simulation</h1>
+  <p class="sub">Drag the frequency slider (or use a fault preset) to simulate the pump's vibration frequency. Each beam is a mechanical bandpass filter — it only produces a strong voltage when the pump vibrates near its tuned frequency.</p>
+
+  <div class="status card" id="statusCard">
+    <div class="dot" id="statusDot"></div>
+    <div>
+      <b id="statusText">Pump Normal — No Fault Detected</b>
+      <span id="statusSub">All channels below threshold</span>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="controls">
+      <button id="btnNormal" class="active">Normal (idle)</button>
+      <button id="btnDry">Dry Run (50 Hz)</button>
+      <button id="btnBearing">Bearing Wear (100 Hz)</button>
+      <button id="btnImbalance">Imbalance (200 Hz)</button>
+      <button id="btnSweep">▶ Sweep 0–250 Hz</button>
+    </div>
+    <div class="freq-row">
+      <span style="color:var(--muted); font-size:.85rem;">0 Hz</span>
+      <input type="range" id="freqSlider" min="0" max="250" step="1" value="8">
+      <span style="color:var(--muted); font-size:.85rem;">250 Hz</span>
+      <div class="freq-val"><span id="freqVal">8</span> Hz</div>
+    </div>
+  </div>
+
+  <div class="card beams">
+    <div class="beam-row">
+      <div class="beam-label"><b>Beam 1</b><span>Dry Run / Cavitation · 50 Hz</span></div>
+      <div class="stage"><div class="clamp"></div><div class="beam-bar" id="bar1" style="background:var(--b1)"></div><div class="disc" id="disc1" style="background:var(--b1)"></div></div>
+      <div class="volt-readout"><span class="v" id="v1">0.00</span> V<div class="volt-bar-track"><div class="volt-bar-fill" id="vf1" style="background:var(--b1)"></div></div></div>
+    </div>
+    <div class="beam-row">
+      <div class="beam-label"><b>Beam 2</b><span>Bearing Wear · 100 Hz</span></div>
+      <div class="stage"><div class="clamp"></div><div class="beam-bar" id="bar2" style="background:var(--b2)"></div><div class="disc" id="disc2" style="background:var(--b2)"></div></div>
+      <div class="volt-readout"><span class="v" id="v2">0.00</span> V<div class="volt-bar-track"><div class="volt-bar-fill" id="vf2" style="background:var(--b2)"></div></div></div>
+    </div>
+    <div class="beam-row">
+      <div class="beam-label"><b>Beam 3</b><span>Imbalance / Erosion · 200 Hz</span></div>
+      <div class="stage"><div class="clamp"></div><div class="beam-bar" id="bar3" style="background:var(--b3)"></div><div class="disc" id="disc3" style="background:var(--b3)"></div></div>
+      <div class="volt-readout"><span class="v" id="v3">0.00</span> V<div class="volt-bar-track"><div class="volt-bar-fill" id="vf3" style="background:var(--b3)"></div></div></div>
+    </div>
+    <div class="legend">
+      <span><span class="sw" style="background:var(--b1)"></span>Beam 1 (red LED)</span>
+      <span><span class="sw" style="background:var(--b2)"></span>Beam 2 (orange LED)</span>
+      <span><span class="sw" style="background:var(--b3)"></span>Beam 3 (blue LED)</span>
+      <span>Threshold: 2.5 V (matches spec's 1–5 V AC output range)</span>
+    </div>
+  </div>
+
+  <footer>Schematic simulation for demo purposes — resonance curves are modeled, not measured. Arduino logic: analogRead each channel, compare peak voltage to threshold, report matching fault.</footer>
+</div>
+
+<script>
+(function(){
+  const beams = [
+    {f0:50,  Q:9,  color:'#ff5a5a', name:'Dry Run / Cavitation'},
+    {f0:100, Q:9,  color:'#ffa63d', name:'Bearing Wear'},
+    {f0:200, Q:10, color:'#4da8ff', name:'Imbalance / Erosion'}
+  ];
+  const VMAX = 5.0, THRESH = 2.5;
+  const slider = document.getElementById('freqSlider');
+  const freqVal = document.getElementById('freqVal');
+  const statusCard = document.getElementById('statusCard');
+  const statusDot = document.getElementById('statusDot');
+  const statusText = document.getElementById('statusText');
+  const statusSub = document.getElementById('statusSub');
+  let sweeping = false, sweepStart = 0;
+  const SWEEP_DURATION = 6000;
+
+  function resonance(f, f0, Q){
+    const r = f / f0;
+    const denom = Math.sqrt(Math.pow(1 - r*r, 2) + Math.pow(r / Q, 2));
+    return 1 / denom;
+  }
+
+  let t0 = performance.now();
+  function frame(now){
+    const f = parseFloat(slider.value);
+    freqVal.textContent = f.toFixed(0);
+    const elapsed = (now - t0) / 1000;
+    let activeFault = null, maxAmpNorm = 0;
+
+    beams.forEach((b, i) => {
+      const idx = i + 1;
+      let amp = resonance(f, b.f0, b.Q);
+      // normalize so peak (at exact f0) reads ~1.0
+      amp = Math.min(amp, 6) / 6 * 1.0;
+      const peakAmp = resonance(b.f0, b.f0, b.Q);
+      const norm = Math.min(amp * (6/peakAmp) / 6, 1.15);
+      const voltage = Math.min(norm * VMAX, VMAX * 1.05);
+
+      const bar = document.getElementById('bar'+idx);
+      const disc = document.getElementById('disc'+idx);
+      const stageWidth = bar.parentElement.clientWidth - 14;
+      const vibPx = Math.min(norm, 1) * 14;
+      const wobble = Math.sin(elapsed * (b.f0/6 + 2)) * vibPx;
+      bar.style.transform = `translateY(${wobble.toFixed(1)}px) rotate(${(wobble*0.35).toFixed(1)}deg)`;
+      const tipX = 14 + bar.clientWidth;
+      disc.style.left = tipX + 'px';
+      disc.style.transform = `translate(-50%, calc(-50% + ${wobble.toFixed(1)}px))`;
+      const glow = Math.min(norm, 1);
+      disc.style.boxShadow = glow > 0.15 ? `0 0 ${8+glow*14}px ${b.color}` : 'none';
+      disc.style.opacity = 0.55 + glow*0.45;
+
+      document.getElementById('v'+idx).textContent = voltage.toFixed(2);
+      const fillPct = Math.min(voltage / VMAX, 1) * 100;
+      const fillEl = document.getElementById('vf'+idx);
+      fillEl.style.width = fillPct.toFixed(0) + '%';
+
+      if (voltage > THRESH && voltage > maxAmpNorm){
+        maxAmpNorm = voltage;
+        activeFault = b;
+      }
+    });
+
+    if (activeFault){
+      statusDot.classList.add('fault');
+      statusCard.style.setProperty('--fault-color', activeFault.color);
+      statusText.textContent = 'Fault Detected: ' + activeFault.name;
+      statusSub.textContent = `Beam tuned to ${activeFault.f0} Hz exceeded 2.5V threshold`;
+    } else {
+      statusDot.classList.remove('fault');
+      statusText.textContent = 'Pump Normal — No Fault Detected';
+      statusSub.textContent = 'All channels below threshold';
+    }
+
+    if (sweeping){
+      const p = ((now - sweepStart) % SWEEP_DURATION) / SWEEP_DURATION;
+      slider.value = Math.round(p * 250);
+    }
+
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+
+  function setActiveBtn(id){
+    document.querySelectorAll('.controls button').forEach(b=>b.classList.remove('active'));
+    if (id) document.getElementById(id).classList.add('active');
+  }
+  document.getElementById('btnNormal').onclick = ()=>{sweeping=false; slider.value=8; setActiveBtn('btnNormal');};
+  document.getElementById('btnDry').onclick = ()=>{sweeping=false; slider.value=50; setActiveBtn('btnDry');};
+  document.getElementById('btnBearing').onclick = ()=>{sweeping=false; slider.value=100; setActiveBtn('btnBearing');};
+  document.getElementById('btnImbalance').onclick = ()=>{sweeping=false; slider.value=200; setActiveBtn('btnImbalance');};
+  document.getElementById('btnSweep').onclick = (e)=>{
+    sweeping = !sweeping;
+    sweepStart = performance.now();
+    setActiveBtn(sweeping ? 'btnSweep' : null);
+  };
+  slider.addEventListener('input', ()=>{ sweeping=false; setActiveBtn(null); });
+})();
+</script>
+</body>
+</html>
